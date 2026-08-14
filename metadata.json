@@ -1,0 +1,7 @@
+{
+  "name": "Memorize Inglês",
+  "description": "Uma plataforma premium de memorização de inglês com flashcards inteligentes, pronúncia nativa e tutor de IA avançado.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
