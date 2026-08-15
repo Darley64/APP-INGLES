@@ -57,11 +57,19 @@ export interface AIExplanation {
   examples: string[];
 }
 
+export interface ReviewScheduleEntry {
+  stage: number;
+  intervalDays: number;
+  nextReviewAt: string;
+  lastReviewedAt: string;
+}
+
 export interface UserStats {
   masteredWords: string[]; 
   favoriteWords: string[];
   difficultWords: string[];
   customLists: CustomList[]; // Agora suporta múltiplas listas
+  reviewSchedule: Record<string, ReviewScheduleEntry>;
   streak: number;
   lastStudyDate: string;
 }

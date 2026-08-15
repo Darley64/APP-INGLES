@@ -11,6 +11,10 @@ interface CardProps {
   onToggleDifficult: (e: React.MouseEvent) => void;
   onSpeech: (e: React.MouseEvent) => void;
   onDelete?: (e: React.MouseEvent) => void;
+  onPrev?: () => void;
+  onNext?: () => void;
+  onShuffle?: () => void;
+  onReviewResult?: (success: boolean) => void;
   isSpeaking: boolean;
   currentIndex: number;
   total: number;
@@ -28,6 +32,10 @@ export const Card: React.FC<CardProps> = ({
   onToggleDifficult,
   onSpeech, 
   onDelete,
+  onPrev,
+  onNext,
+  onShuffle,
+  onReviewResult,
   isSpeaking, 
   currentIndex, 
   total,
@@ -47,7 +55,7 @@ export const Card: React.FC<CardProps> = ({
   const backLabel = mode === 'pt-en' ? 'English' : 'Português';
 
   return (
-    <div className="card-container w-full max-w-sm h-72 md:h-80 perspective-1000 cursor-pointer group" onClick={onFlip}>
+    <div className="card-container w-full max-w-sm h-[28rem] md:h-[32rem] perspective-1000 cursor-pointer group" onClick={onFlip}>
       <div className={`card relative w-full h-full transition-transform duration-700 preserve-3d ${isFlipped ? 'rotate-y-180' : ''}`}>
         
         {/* Face Frontal */}
@@ -111,8 +119,57 @@ export const Card: React.FC<CardProps> = ({
             <span className="text-[9px] font-bold uppercase tracking-widest">Toque para ver tradução</span>
           </div>
 
-          <div className="absolute bottom-7 text-[9px] text-slate-300 font-bold tracking-[0.3em] uppercase">
-            {currentIndex + 1} / {total}
+          <div className="absolute bottom-4 left-1/2 w-[calc(100%-2rem)] -translate-x-1/2">
+            <div className="flex items-center justify-between mb-2 px-1">
+              <span className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-400">Palavras</span>
+              <span className="text-[9px] font-black text-slate-500">{currentIndex + 1}/{total}</span>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2 mb-3">
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onPrev?.(); }}
+                className="h-8 rounded-full bg-slate-50 border border-slate-100 text-slate-500 flex items-center justify-center shadow-sm transition-transform active:scale-95"
+                aria-label="Palavra anterior"
+              >
+                <i className="fas fa-arrow-left text-[10px]"></i>
+              </button>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onShuffle?.(); }}
+                className="h-8 rounded-full bg-indigo-600 text-white shadow-lg flex items-center justify-center transition-transform active:scale-95"
+                aria-label="Embaralhar"
+              >
+                <i className="fas fa-random text-[10px]"></i>
+              </button>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onNext?.(); }}
+                className="h-8 rounded-full bg-slate-50 border border-slate-100 text-slate-500 flex items-center justify-center shadow-sm transition-transform active:scale-95"
+                aria-label="Próxima palavra"
+              >
+                <i className="fas fa-arrow-right text-[10px]"></i>
+              </button>
+            </div>
+
+            <div className="flex justify-center gap-3">
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onReviewResult?.(false); }}
+                className="w-10 h-10 rounded-full bg-red-50 text-red-600 border border-red-100 flex items-center justify-center shadow-sm transition-transform active:scale-95"
+                aria-label="Errei"
+              >
+                <i className="fas fa-times text-sm"></i>
+              </button>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onReviewResult?.(true); }}
+                className="w-10 h-10 rounded-full bg-emerald-500 text-white shadow-lg flex items-center justify-center transition-transform active:scale-95"
+                aria-label="Acertou"
+              >
+                <i className="fas fa-check text-sm"></i>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -126,9 +183,57 @@ export const Card: React.FC<CardProps> = ({
             {backText}
           </h2>
 
-          <div className="mt-8 flex items-center space-x-2 text-white/40">
-            <i className="fas fa-sync-alt text-[10px] opacity-50"></i>
-            <span className="text-[9px] font-bold uppercase tracking-widest">Toque para voltar</span>
+          <div className="absolute bottom-4 left-1/2 w-[calc(100%-2rem)] -translate-x-1/2">
+            <div className="flex items-center justify-between mb-2 px-1">
+              <span className="text-[9px] font-black uppercase tracking-[0.2em] text-white/60">Palavras</span>
+              <span className="text-[9px] font-black text-white/80">{currentIndex + 1}/{total}</span>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2 mb-3">
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onPrev?.(); }}
+                className="h-8 rounded-full bg-white/10 border border-white/15 text-white/80 flex items-center justify-center shadow-sm"
+                aria-label="Palavra anterior"
+              >
+                <i className="fas fa-arrow-left text-[10px]"></i>
+              </button>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onShuffle?.(); }}
+                className="h-8 rounded-full bg-white text-indigo-600 shadow-lg flex items-center justify-center"
+                aria-label="Embaralhar"
+              >
+                <i className="fas fa-random text-[10px]"></i>
+              </button>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onNext?.(); }}
+                className="h-8 rounded-full bg-white/10 border border-white/15 text-white/80 flex items-center justify-center shadow-sm"
+                aria-label="Próxima palavra"
+              >
+                <i className="fas fa-arrow-right text-[10px]"></i>
+              </button>
+            </div>
+
+            <div className="flex justify-center gap-3">
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onReviewResult?.(false); }}
+                className="w-10 h-10 rounded-full bg-white/10 border border-white/15 text-white flex items-center justify-center shadow-sm"
+                aria-label="Errei"
+              >
+                <i className="fas fa-times text-sm"></i>
+              </button>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onReviewResult?.(true); }}
+                className="w-10 h-10 rounded-full bg-emerald-400 text-indigo-900 shadow-lg flex items-center justify-center"
+                aria-label="Acertou"
+              >
+                <i className="fas fa-check text-sm"></i>
+              </button>
+            </div>
           </div>
         </div>
       </div>

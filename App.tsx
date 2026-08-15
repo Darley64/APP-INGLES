@@ -50,6 +50,7 @@ const App: React.FC = () => {
 
   const [showNewListModal, setShowNewListModal] = useState(false);
   const [showManageModal, setShowManageModal] = useState(false);
+  const [showActiveListModal, setShowActiveListModal] = useState(false);
   const [newListName, setNewListName] = useState('');
   const [newWordEn, setNewWordEn] = useState('');
   const [newWordPt, setNewWordPt] = useState('');
@@ -59,6 +60,7 @@ const App: React.FC = () => {
     favoriteWords: [],
     difficultWords: [],
     customLists: [],
+    reviewSchedule: {},
     streak: 0,
     lastStudyDate: new Date().toLocaleDateString()
   });
@@ -98,6 +100,7 @@ const App: React.FC = () => {
           favoriteWords: data.favoriteWords || [],
           difficultWords: data.difficultWords || [],
           customLists: data.customLists || [],
+          reviewSchedule: data.reviewSchedule || {},
           streak: data.streak || 0,
           lastStudyDate: data.lastStudyDate || new Date().toLocaleDateString()
         });
@@ -107,6 +110,7 @@ const App: React.FC = () => {
           favoriteWords: [],
           difficultWords: [],
           customLists: [],
+          reviewSchedule: {},
           streak: 0,
           lastStudyDate: new Date().toLocaleDateString()
         };
@@ -164,6 +168,7 @@ const App: React.FC = () => {
       favoriteWords: [],
       difficultWords: [],
       customLists: [],
+      reviewSchedule: {},
       streak: 0,
       lastStudyDate: new Date().toLocaleDateString()
     });
@@ -174,6 +179,67 @@ const App: React.FC = () => {
     const lists = stats?.customLists || [];
     return lists.find(l => l.id === currentCategory);
   }, [stats?.customLists, currentCategory]);
+
+  const activeListWords = useMemo(() => {
+    if (activeCustomList) return activeCustomList.words || [];
+    return FLASHCARDS[currentCategory] || [];
+  }, [activeCustomList, currentCategory]);
+
+  const REVIEW_INTERVALS = [1, 3, 7, 14, 30, 60, 90];
+
+  const addDaysToDate = (date: Date, days: number) => {
+    const nextDate = new Date(date);
+    nextDate.setDate(nextDate.getDate() + days);
+    return nextDate.toISOString();
+  };
+
+  const getWordReviewState = (word: string) => stats.reviewSchedule?.[word] || null;
+
+  const getReviewDueWords = useCallback((source: 'difficult' | 'mastered') => {
+    const sourceWords = source === 'difficult' ? stats?.difficultWords || [] : stats?.masteredWords || [];
+    const now = Date.now();
+
+    return sourceWords.filter((word) => {
+      const reviewState = getWordReviewState(word);
+      if (!reviewState) return true;
+
+      const nextReviewAt = new Date(reviewState.nextReviewAt).getTime();
+      const lastReviewedAt = new Date(reviewState.lastReviewedAt || reviewState.nextReviewAt).getTime();
+      const wasReviewedRecently = now - lastReviewedAt < 1000 * 60 * 60 * 24;
+
+      return nextReviewAt <= now || wasReviewedRecently;
+    });
+  }, [stats?.difficultWords, stats?.masteredWords, stats?.reviewSchedule]);
+
+  const applyReviewResult = useCallback((word: string, wasCorrect: boolean) => {
+    if (word === 'Empty') return;
+
+    const previousState = stats.reviewSchedule?.[word];
+    const currentStage = previousState?.stage ?? 0;
+
+    const nextStage = wasCorrect
+      ? Math.min(REVIEW_INTERVALS.length - 1, currentStage + 1)
+      : Math.max(0, currentStage - 1);
+
+    const baseInterval = REVIEW_INTERVALS[nextStage] ?? REVIEW_INTERVALS[REVIEW_INTERVALS.length - 1];
+    const nextInterval = wasCorrect ? baseInterval : Math.min(3, baseInterval);
+
+    const nextReviewSchedule = { ...(stats.reviewSchedule || {}) };
+    nextReviewSchedule[word] = {
+      stage: nextStage,
+      intervalDays: nextInterval,
+      nextReviewAt: addDaysToDate(new Date(), nextInterval),
+      lastReviewedAt: new Date().toISOString()
+    };
+
+    const newStats = {
+      ...stats,
+      reviewSchedule: nextReviewSchedule
+    };
+
+    setStats(newStats);
+    syncStats(newStats);
+  }, [stats, user]);
 
   const allWordsFlattened = useMemo(() => {
     const defaultWords = Object.values(FLASHCARDS).flat();
@@ -188,7 +254,7 @@ const App: React.FC = () => {
 
     if (!searchQuery.trim()) {
       if (appMode === 'training') {
-        const sourceWords = trainingSource === 'difficult' ? difficult : mastered;
+        const sourceWords = getReviewDueWords(trainingSource);
         return allWordsFlattened.filter(f => sourceWords.includes(f.en));
       }
       if (activeCustomList) return activeCustomList.words || [];
@@ -198,7 +264,7 @@ const App: React.FC = () => {
       w.en.toLowerCase().includes(searchQuery.toLowerCase()) || 
       w.pt.toLowerCase().includes(searchQuery.toLowerCase())
     );
-  }, [searchQuery, currentCategory, appMode, trainingSource, stats, allWordsFlattened, activeCustomList]);
+  }, [searchQuery, currentCategory, appMode, trainingSource, stats, allWordsFlattened, activeCustomList, getReviewDueWords]);
 
   const [shuffledCards, setShuffledCards] = useState<Flashcard[]>([]);
 
@@ -218,11 +284,27 @@ const App: React.FC = () => {
   const handleMarkCategoryLearned = () => {
     const cards = activeCustomList ? activeCustomList.words : (FLASHCARDS[currentCategory] || []);
     if (cards.length === 0) return;
+
+    const nextReviewSchedule = { ...(stats.reviewSchedule || {}) };
+
+    cards.forEach((card) => {
+      const currentStage = nextReviewSchedule[card.en]?.stage ?? 0;
+      const nextStage = Math.min(REVIEW_INTERVALS.length - 1, currentStage + 1);
+      const nextInterval = REVIEW_INTERVALS[nextStage];
+      nextReviewSchedule[card.en] = {
+        stage: nextStage,
+        intervalDays: nextInterval,
+        nextReviewAt: addDaysToDate(new Date(), nextInterval),
+        lastReviewedAt: new Date().toISOString()
+      };
+    });
+
     const ens = cards.map(c => c.en);
     const newStats = {
       ...stats,
       masteredWords: Array.from(new Set([...stats.masteredWords, ...ens])),
-      difficultWords: stats.difficultWords.filter(w => !ens.includes(w))
+      difficultWords: stats.difficultWords.filter(w => !ens.includes(w)),
+      reviewSchedule: nextReviewSchedule
     };
     setStats(newStats);
     syncStats(newStats);
@@ -298,37 +380,6 @@ const App: React.FC = () => {
     syncStats(newStats);
   };
 
-  const handleToggleDifficult = useCallback((word: string) => {
-    if (word === 'Empty') return;
-    const difficult = stats?.difficultWords || [];
-    const mastered = stats?.masteredWords || [];
-    const isNowDifficult = !difficult.includes(word);
-    
-    const newStats = {
-      ...stats,
-      difficultWords: isNowDifficult ? [...difficult, word] : difficult.filter(w => w !== word),
-      masteredWords: mastered.filter(w => w !== word)
-    };
-    setStats(newStats);
-    syncStats(newStats);
-  }, [stats, user]);
-
-  const handleToggleMastered = useCallback((word: string) => {
-    if (word === 'Empty') return;
-    const difficult = stats?.difficultWords || [];
-    const mastered = stats?.masteredWords || [];
-    const isNowMastered = !mastered.includes(word);
-    
-    const newStats = {
-      ...stats,
-      masteredWords: isNowMastered ? [...mastered, word] : mastered.filter(w => w !== word),
-      difficultWords: difficult.filter(w => w !== word)
-    };
-    setStats(newStats);
-    syncStats(newStats);
-    handleNext();
-  }, [stats, shuffledCards.length, user]);
-
   const handleNext = useCallback(() => {
     if (shuffledCards.length === 0) return;
     setIsFlipped(false);
@@ -341,6 +392,61 @@ const App: React.FC = () => {
     setTimeout(() => { setCurrentIndex((prev) => (prev - 1 + shuffledCards.length) % shuffledCards.length); }, 150);
   }, [shuffledCards.length]);
 
+  const handleToggleDifficult = useCallback((word: string) => {
+    if (word === 'Empty') return;
+    const difficult = stats?.difficultWords || [];
+    const mastered = stats?.masteredWords || [];
+    const isNowDifficult = !difficult.includes(word);
+
+    const nextReviewSchedule = { ...(stats.reviewSchedule || {}) };
+    const currentStage = nextReviewSchedule[word]?.stage ?? 0;
+    const nextStage = Math.max(0, currentStage - 1);
+    const retryInterval = Math.min(3, REVIEW_INTERVALS[nextStage] ?? 1);
+    nextReviewSchedule[word] = {
+      stage: nextStage,
+      intervalDays: retryInterval,
+      nextReviewAt: addDaysToDate(new Date(), retryInterval),
+      lastReviewedAt: new Date().toISOString()
+    };
+
+    const newStats = {
+      ...stats,
+      difficultWords: isNowDifficult ? [...difficult, word] : difficult.filter(w => w !== word),
+      masteredWords: mastered.filter(w => w !== word),
+      reviewSchedule: nextReviewSchedule
+    };
+    setStats(newStats);
+    syncStats(newStats);
+  }, [stats, user]);
+
+  const handleToggleMastered = useCallback((word: string) => {
+    if (word === 'Empty') return;
+    const difficult = stats?.difficultWords || [];
+    const mastered = stats?.masteredWords || [];
+    const isNowMastered = !mastered.includes(word);
+
+    const nextReviewSchedule = { ...(stats.reviewSchedule || {}) };
+    const currentStage = nextReviewSchedule[word]?.stage ?? 0;
+    const nextStage = isNowMastered ? Math.min(REVIEW_INTERVALS.length - 1, currentStage + 1) : 0;
+    const nextInterval = REVIEW_INTERVALS[nextStage] ?? REVIEW_INTERVALS[REVIEW_INTERVALS.length - 1];
+    nextReviewSchedule[word] = {
+      stage: nextStage,
+      intervalDays: nextInterval,
+      nextReviewAt: addDaysToDate(new Date(), nextInterval),
+      lastReviewedAt: new Date().toISOString()
+    };
+
+    const newStats = {
+      ...stats,
+      masteredWords: isNowMastered ? [...mastered, word] : mastered.filter(w => w !== word),
+      difficultWords: difficult.filter(w => w !== word),
+      reviewSchedule: nextReviewSchedule
+    };
+    setStats(newStats);
+    syncStats(newStats);
+    handleNext();
+  }, [stats, shuffledCards.length, user, handleNext]);
+
   const handleShuffle = useCallback(() => {
     if (filteredFlashcards.length === 0) return;
     const newOrder = [...filteredFlashcards].sort(() => Math.random() - 0.5);
@@ -348,6 +454,45 @@ const App: React.FC = () => {
     setCurrentIndex(0);
     setIsFlipped(false);
   }, [filteredFlashcards]);
+
+  const handleReviewResult = useCallback((word: string, wasCorrect: boolean) => {
+    if (word === 'Empty') return;
+
+    const currentState = stats.reviewSchedule?.[word];
+    const currentStage = currentState?.stage ?? 0;
+    const nextStage = wasCorrect
+      ? Math.min(REVIEW_INTERVALS.length - 1, currentStage + 1)
+      : Math.max(0, currentStage - 1);
+
+    const intervalBase = REVIEW_INTERVALS[nextStage] ?? 1;
+    const nextInterval = wasCorrect ? intervalBase : Math.min(3, intervalBase);
+
+    const updatedSchedule = { ...(stats.reviewSchedule || {}) };
+    updatedSchedule[word] = {
+      stage: nextStage,
+      intervalDays: nextInterval,
+      nextReviewAt: addDaysToDate(new Date(), nextInterval),
+      lastReviewedAt: new Date().toISOString()
+    };
+
+    const difficult = stats?.difficultWords || [];
+    const mastered = stats?.masteredWords || [];
+
+    const newStats = {
+      ...stats,
+      reviewSchedule: updatedSchedule,
+      difficultWords: wasCorrect ? difficult.filter(w => w !== word) : Array.from(new Set([...difficult, word])),
+      masteredWords: wasCorrect ? Array.from(new Set([...mastered, word])) : mastered.filter(w => w !== word)
+    };
+
+    setStats(newStats);
+    syncStats(newStats);
+    setAppMode('training');
+    setTrainingSubMode('cards');
+    setTrainingSource(wasCorrect ? 'mastered' : 'difficult');
+    setSearchQuery('');
+    handleNext();
+  }, [stats, handleNext]);
 
   const handleSpeech = async (text: string) => {
     if (isSpeaking || text === 'Empty') return;
@@ -498,7 +643,13 @@ const App: React.FC = () => {
           <div className="mb-8 space-y-4">
             <div className="flex justify-between items-center px-1">
                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Tópico Ativo</span>
-               <button onClick={() => setShowNewListModal(true)} className="text-[10px] font-black text-indigo-600 uppercase">+ Criar Lista</button>
+               <div className="flex items-center space-x-2 flex-wrap justify-end">
+                 {activeCustomList && (
+                   <button onClick={() => setShowManageModal(true)} className="text-[10px] font-black text-red-500 uppercase">Gerenciar</button>
+                 )}
+                 <button onClick={() => setShowActiveListModal(true)} className="text-[10px] font-black text-slate-500 uppercase">Ver lista</button>
+                 <button onClick={() => setShowNewListModal(true)} className="text-[10px] font-black text-indigo-600 uppercase">+ Criar Lista</button>
+               </div>
             </div>
             <select value={currentCategory} onChange={(e) => setCurrentCategory(e.target.value as CategoryKey)} className="w-full bg-white border border-slate-200 text-slate-700 font-bold py-3.5 px-5 rounded-2xl shadow-sm appearance-none outline-none focus:ring-2 focus:ring-indigo-500/20">
               {categoriesWithDynamic.map((cat) => (
@@ -510,16 +661,55 @@ const App: React.FC = () => {
 
         {appMode === 'training' && trainingSubMode === 'select' && (
           <div className="space-y-4 animate-fadeIn">
-            <h2 className="text-xl font-black text-slate-800 mb-6 text-center">Área de Treino</h2>
-            <button onClick={() => { setTrainingSource('difficult'); setTrainingSubMode('cards'); }} className="w-full p-8 bg-white border border-slate-100 rounded-[2rem] shadow-sm flex items-center space-x-6">
-              <div className="w-16 h-16 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600"><i className="fas fa-bolt text-2xl"></i></div>
-              <div className="text-left"><h4 className="font-black text-slate-800 uppercase text-xs">Revisar Difíceis</h4><span className="text-[10px] font-black text-indigo-500">{stats?.difficultWords?.length || 0} palavras</span></div>
-            </button>
-            <button onClick={() => { setTrainingSource('mastered'); setTrainingSubMode('cards'); }} className="w-full p-8 bg-white border border-slate-100 rounded-[2rem] shadow-sm flex items-center space-x-6">
-              <div className="w-16 h-16 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600"><i className="fas fa-check-double text-2xl"></i></div>
-              <div className="text-left"><h4 className="font-black text-slate-800 uppercase text-xs">Treinar Aprendidas</h4><span className="text-[10px] font-black text-emerald-500">{stats?.masteredWords?.length || 0} palavras</span></div>
-            </button>
-            <button onClick={() => setAppMode('study')} className="w-full py-4 text-slate-400 font-black uppercase text-[10px] tracking-widest">Voltar</button>
+            <h2 className="text-xl font-black text-slate-800 mb-4 text-center">Área de Treino</h2>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-[1.5rem] border border-indigo-100 bg-indigo-50 p-3">
+                <p className="text-[9px] font-black uppercase tracking-widest text-indigo-600">Hoje</p>
+                <p className="mt-2 text-2xl font-black text-slate-800">{getReviewDueWords('difficult').length + getReviewDueWords('mastered').length}</p>
+              </div>
+              <div className="rounded-[1.5rem] border border-amber-100 bg-amber-50 p-3">
+                <p className="text-[9px] font-black uppercase tracking-widest text-amber-600">Fracas</p>
+                <p className="mt-2 text-2xl font-black text-slate-800">{stats?.difficultWords?.length || 0}</p>
+              </div>
+            </div>
+
+            <div className="rounded-[1.8rem] border border-slate-100 bg-white p-4 shadow-sm">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">Resumo do desempenho</p>
+                <span className="text-[9px] font-black text-emerald-600">{Math.min(100, Math.max(0, Math.round(((stats?.masteredWords?.length || 0) / Math.max(1, (stats?.masteredWords?.length || 0) + (stats?.difficultWords?.length || 0))) * 100)))}%</span>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="rounded-2xl bg-indigo-50 p-2">
+                  <p className="text-[9px] text-slate-500">Aprendidas</p>
+                  <p className="text-lg font-black text-indigo-600">{stats?.masteredWords?.length || 0}</p>
+                </div>
+                <div className="rounded-2xl bg-amber-50 p-2">
+                  <p className="text-[9px] text-slate-500">Difíceis</p>
+                  <p className="text-lg font-black text-amber-600">{stats?.difficultWords?.length || 0}</p>
+                </div>
+                <div className="rounded-2xl bg-emerald-50 p-2">
+                  <p className="text-[9px] text-slate-500">Hoje</p>
+                  <p className="text-lg font-black text-emerald-600">{getReviewDueWords('difficult').length + getReviewDueWords('mastered').length}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-[1.8rem] border border-slate-100 bg-white p-4 shadow-sm">
+              <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-3">Próximas revisões</p>
+              <div className="space-y-2">
+                <button onClick={() => { setTrainingSource('difficult'); setTrainingSubMode('cards'); }} className="w-full p-4 bg-white border border-slate-100 rounded-[1.3rem] shadow-sm flex items-center space-x-4">
+                  <div className="w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600"><i className="fas fa-bolt"></i></div>
+                  <div className="text-left flex-1"><h4 className="font-black text-slate-800 uppercase text-[10px]">Revisar Difíceis</h4><span className="text-[9px] font-black text-indigo-500">{getReviewDueWords('difficult').length} pronto(s)</span></div>
+                </button>
+                <button onClick={() => { setTrainingSource('mastered'); setTrainingSubMode('cards'); }} className="w-full p-4 bg-white border border-slate-100 rounded-[1.3rem] shadow-sm flex items-center space-x-4">
+                  <div className="w-12 h-12 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600"><i className="fas fa-check-double"></i></div>
+                  <div className="text-left flex-1"><h4 className="font-black text-slate-800 uppercase text-[10px]">Treinar Aprendidas</h4><span className="text-[9px] font-black text-emerald-500">{getReviewDueWords('mastered').length} pronto(s)</span></div>
+                </button>
+              </div>
+            </div>
+
+            <button onClick={() => setAppMode('study')} className="w-full py-3 text-slate-400 font-black uppercase text-[10px] tracking-widest">Voltar</button>
           </div>
         )}
 
@@ -534,6 +724,43 @@ const App: React.FC = () => {
                   <button type="submit" className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl text-xs font-black uppercase shadow-lg shadow-indigo-200">Criar</button>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+
+        {showActiveListModal && (
+          <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-sm" onClick={() => setShowActiveListModal(false)}>
+            <div className="bg-white rounded-t-[2.5rem] sm:rounded-[2.5rem] p-6 w-full max-w-md shadow-2xl animate-fadeIn" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-black text-slate-800">Lista ativa</h3>
+                <button onClick={() => setShowActiveListModal(false)} className="text-[10px] font-black uppercase text-slate-400">Fechar</button>
+              </div>
+              <div className="mb-4 text-[10px] font-black uppercase tracking-widest text-indigo-500">
+                {activeListWords.length} palavras
+              </div>
+              <div className="max-h-72 overflow-y-auto space-y-2 rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                {activeListWords.length === 0 ? (
+                  <p className="text-sm text-slate-400 font-medium py-8 text-center">Nenhuma palavra nessa lista.</p>
+                ) : (
+                  activeListWords.map((word, index) => (
+                    <div key={`${word.en}-${index}`} className="flex items-center justify-between gap-2 rounded-xl bg-white px-3 py-2 border border-slate-100">
+                      <div className="flex-1 min-w-0">
+                        <span className="font-black text-slate-800 text-sm block truncate">{word.en}</span>
+                        <span className="text-[10px] text-slate-500 block truncate">{word.pt}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handleRemoveWordFromList(word.en);
+                        }}
+                        className="text-[9px] font-black uppercase text-red-500 px-2 py-1 rounded-lg bg-red-50 border border-red-100"
+                      >
+                        Apagar
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -587,6 +814,10 @@ const App: React.FC = () => {
                     onToggleDifficult={(e) => { e.stopPropagation(); handleToggleDifficult(currentFlashcard.en); }} 
                     onSpeech={(e) => { e.stopPropagation(); handleSpeech(currentFlashcard.en); }} 
                     onDelete={(e) => { e.stopPropagation(); handleRemoveWordFromList(currentFlashcard.en); }} 
+                    onPrev={handlePrev}
+                    onNext={handleNext}
+                    onShuffle={handleShuffle}
+                    onReviewResult={(success) => handleReviewResult(currentFlashcard.en, success)}
                     isSpeaking={isSpeaking} 
                     currentIndex={currentIndex} 
                     total={shuffledCards.length} 
@@ -594,12 +825,6 @@ const App: React.FC = () => {
                     isTrainingMode={appMode === 'training'} 
                     isCustomCard={!!activeCustomList} 
                   />
-
-                  <div className="flex items-center space-x-6">
-                    <button onClick={handlePrev} className="w-14 h-14 rounded-2xl bg-white shadow-sm border border-slate-100 flex items-center justify-center text-slate-400"><i className="fas fa-chevron-left"></i></button>
-                    <button onClick={handleShuffle} className="w-16 h-16 rounded-3xl bg-indigo-600 text-white shadow-xl flex items-center justify-center active:scale-90 transition-transform"><i className="fas fa-random"></i></button>
-                    <button onClick={handleNext} className="w-14 h-14 rounded-2xl bg-white shadow-sm border border-slate-100 flex items-center justify-center text-slate-400"><i className="fas fa-chevron-right"></i></button>
-                  </div>
 
                   <div className="w-full space-y-4">
                     <AITutor word={currentFlashcard.en} category={activeCategoryInfo?.label || 'Geral'} />
